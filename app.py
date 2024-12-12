@@ -321,15 +321,7 @@ if df_actual is not None and df_potential is not None:
                         'unidades_pedidas': '{:,.0f}'
                     })
                 )
-                
-                # Agregar resumen estadístico
-                st.write("### Resumen Estadístico")
-                st.dataframe(
-                    df_potential_filtered.describe().style.format({
-                        'precio_total_vendedor': '${:,.2f}',
-                        'unidades_pedidas': '{:,.0f}'
-                    })
-                )
+
 # Mostrar el dataframe
                     #st.dataframe(
         #analysis.style.format({
