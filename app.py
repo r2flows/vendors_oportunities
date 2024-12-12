@@ -21,17 +21,18 @@ def create_sales_potential_dashboard(df_actual, df_potential):
         
         # Crear el análisis base
         zone_analysis = pd.merge(
-            df_actual.groupby(['geo_zone', 'vendor_id']).agg({
-                'precio_total': 'sum',
-                'unidades_pedidas': 'sum',
-            }).reset_index(),
-            df_potential.groupby(['geo_zone', 'vendor_id']).agg({
-                'precio_total_vendedor': 'sum',
-                'unidades_pedidas': 'sum',
-            }).reset_index(),
-            on=['geo_zone', 'vendor_id'],
-            suffixes=('_actual', '_potential')
-        )
+        df_actual.groupby(['geo_zone', 'vendor_id']).agg({
+        'precio_total': 'sum',
+        'unidades_pedidas': 'sum',
+    }).reset_index(),
+        df_potential.groupby(['geo_zone', 'vendor_id']).agg({
+        'precio_total_vendedor': 'sum',
+        'unidades_pedidas': 'sum',
+    }).reset_index(),
+        on=['geo_zone', 'vendor_id'],
+        how='outer',  # Cambiar a outer join
+        suffixes=('_actual', '_potential')
+        ).fillna(0) 
         
         # Agregar los conteos correctos de PDV
         zone_analysis['pdv_actual'] = zone_analysis['geo_zone'].map(pdv_actual.apply(len))
@@ -173,11 +174,10 @@ def load_data():
         df_potential['precio_total_vendedor'] = df_potential['precio_total_vendedor'].astype(float)
         
         return df_actual, df_potential
-    
+        
     except Exception as e:
         st.error(f"Error al cargar los datos: {str(e)}")
         return None, None
-
 # Título
 st.header("🏪 Oportunidades de Ventas por Proveedor y Zona Geográfica")
 
@@ -196,7 +196,7 @@ if df_actual is not None and df_potential is not None:
     # Filtrar datos
     df_actual_filtered = df_actual[df_actual['vendor_id'] == selected_vendor].copy()
     df_potential_filtered = df_potential[df_potential['vendor_id'] == selected_vendor].copy()
-    
+
     # Verificar si hay datos para mostrar
     if len(df_actual_filtered) == 0 or len(df_potential_filtered) == 0:
         st.warning(f"No hay datos disponibles para el proveedor {selected_vendor}")
@@ -310,7 +310,26 @@ if df_actual is not None and df_potential is not None:
                             📦 Unidades Potenciales: {row['unidades_pedidas']:,.0f}
                         </div>
                     """, unsafe_allow_html=True)
-
+# Agregar visualización del DataFrame df_potential
+            st.subheader("🔍 Verificación de Datos")
+            with st.expander("Ver datos de Ventas Potenciales"):
+                st.write("### DataFrame de Ventas Potenciales")
+                st.write("Número total de registros:", len(df_potential_filtered))
+                st.dataframe(
+                    df_potential_filtered.style.format({
+                        'precio_total_vendedor': '${:,.2f}',
+                        'unidades_pedidas': '{:,.0f}'
+                    })
+                )
+                
+                # Agregar resumen estadístico
+                st.write("### Resumen Estadístico")
+                st.dataframe(
+                    df_potential_filtered.describe().style.format({
+                        'precio_total_vendedor': '${:,.2f}',
+                        'unidades_pedidas': '{:,.0f}'
+                    })
+                )
 # Mostrar el dataframe
                     #st.dataframe(
         #analysis.style.format({
