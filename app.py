@@ -339,16 +339,16 @@ if df_actual is not None and df_potential is not None:
                         </div>
                     """, unsafe_allow_html=True)
 # Agregar visualización del DataFrame df_potential
-            st.subheader("🔍 Verificación de Datos")
-            with st.expander("Ver datos de Ventas Potenciales"):
-                st.write("### DataFrame de Ventas Potenciales")
-                st.write("Número total de registros:", len(df_potential_filtered))
-                st.dataframe(
-                    df_potential_filtered.style.format({
-                        'precio_total_vendedor': '${:,.2f}',
-                        'unidades_pedidas': '{:,.0f}'
-                    })
-                )
+           # st.subheader("🔍 Verificación de Datos")
+            #with st.expander("Ver datos de Ventas Potenciales"):
+             #   st.write("### DataFrame de Ventas Potenciales")
+              #  st.write("Número total de registros:", len(df_potential_filtered))
+               # st.dataframe(
+                #    df_potential_filtered.style.format({
+                 #       'precio_total_vendedor': '${:,.2f}',
+                  #      'unidades_pedidas': '{:,.0f}'
+                   # })
+                #)
 
 # Mostrar el dataframe
                     #st.dataframe(
