@@ -13,26 +13,26 @@ def create_sales_potential_dashboard(df_actual, df_potential):
         # Primero obtener los PDVs únicos por zona
         pdv_actual = (df_actual.groupby('geo_zone')
                      ['point_of_sale_id'].unique()
-                     .apply(lambda x: set(x)))
+                     .apply(lambda x: set(x))) if not df_actual.empty else pd.Series(dtype='object')
         
         pdv_potential = (df_potential.groupby('geo_zone')
                         ['point_of_sale_id'].unique()
-                        .apply(lambda x: set(x)))
-        
+                        .apply(lambda x: set(x))) if not df_potential.empty else pd.Series(dtype='object')
+            
         # Crear el análisis base
         zone_analysis = pd.merge(
-        df_actual.groupby(['geo_zone', 'vendor_id']).agg({
-        'precio_total': 'sum',
-        'unidades_pedidas': 'sum',
-    }).reset_index(),
-        df_potential.groupby(['geo_zone', 'vendor_id']).agg({
-        'precio_total_vendedor': 'sum',
-        'unidades_pedidas': 'sum',
-    }).reset_index(),
-        on=['geo_zone', 'vendor_id'],
-        how='outer',  # Cambiar a outer join
-        suffixes=('_actual', '_potential')
-        ).fillna(0) 
+            df_potential.groupby(['geo_zone', 'vendor_id']).agg({
+                'precio_total_vendedor': 'sum',
+                'unidades_pedidas': 'sum',
+            }).reset_index(),
+            df_actual.groupby(['geo_zone', 'vendor_id']).agg({
+                'precio_total': 'sum',
+                'unidades_pedidas': 'sum',
+            }).reset_index() if not df_actual.empty else pd.DataFrame(columns=['geo_zone', 'vendor_id', 'precio_total', 'unidades_pedidas']),
+            on=['geo_zone', 'vendor_id'],
+            how='left',  # Cambiar a left join para mantener todos los datos de potential
+            suffixes=('_potential', '_actual')
+        ).fillna(0)
         
         # Agregar los conteos correctos de PDV
         zone_analysis['pdv_actual'] = zone_analysis['geo_zone'].map(pdv_actual.apply(len))
@@ -144,30 +144,53 @@ def create_sales_potential_dashboard(df_actual, df_potential):
 @st.cache_data
 def load_data():
     try:
-        # Cargar datos
-        orders_delivered = pd.read_csv('orders_delivered_pos_vendor_geozone.csv')
-        top_5_ventas = pd.read_csv('top_5_productos_geozona.csv')
+        # Cargar los datos originales
+        orders_delivered = pd.read_csv('orders_delivered_pos_vendor_geozone_1.csv')
+        top_5_ventas = pd.read_csv('top_5_productos_geozona_1.csv')
+        vendor_pos_relations = pd.read_csv('vendor_pos_relations.csv')
 
-        # Convertir vendor_id a string en ambos DataFrames
+        # Asegurar que los IDs sean del mismo tipo en todos los DataFrames
         orders_delivered['vendor_id'] = orders_delivered['vendor_id'].astype(str)
         top_5_ventas['vendor_id'] = top_5_ventas['vendor_id'].astype(str)
-        top_5_ventas = top_5_ventas[top_5_ventas['vendor_id'].isin(['1152','1156','1159','1164'])]
+        vendor_pos_relations['vendor_id'] = vendor_pos_relations['vendor_id'].astype(str)
+        
+        orders_delivered['point_of_sale_id'] = orders_delivered['point_of_sale_id'].astype(str)
+        top_5_ventas['point_of_sale_id'] = top_5_ventas['point_of_sale_id'].astype(str)
+        vendor_pos_relations['point_of_sale_id'] = vendor_pos_relations['point_of_sale_id'].astype(str)
 
-        # Reemplazar vendor_ids
+        # Mapeo y filtrado de vendors
         vendor_mapping = {'10269':'1152', '10273':'1156', '10276':'1159', '10281':'1164'}
         orders_delivered['vendor_id'] = orders_delivered['vendor_id'].replace(vendor_mapping)
-        orders_delivered = orders_delivered[orders_delivered['vendor_id'].isin(['1152','1156','1159','1164'])]
+        vendor_pos_relations['vendor_id'] = vendor_pos_relations['vendor_id'].replace(vendor_mapping)
+        
+        valid_vendors = ['1152', '1156', '1159', '1164']
+        orders_delivered = orders_delivered[orders_delivered['vendor_id'].isin(valid_vendors)]
+        top_5_ventas = top_5_ventas[top_5_ventas['vendor_id'].isin(valid_vendors)]
+        vendor_pos_relations = vendor_pos_relations[vendor_pos_relations['vendor_id'].isin(valid_vendors)]
 
         # Preparar df_actual
         df_actual = orders_delivered.copy()
         df_actual['precio_total'] = df_actual['unidades_pedidas'].astype(float) * df_actual['precio_minimo'].astype(float)
-        df_actual = df_actual[['point_of_sale_id', 'vendor_id', 'geo_zone', 'unidades_pedidas', 'precio_total','super_catalog_id']]
+        df_actual = df_actual[['point_of_sale_id', 'vendor_id', 'geo_zone', 'unidades_pedidas', 'precio_total', 'super_catalog_id']]
         
         # Preparar df_potential
         df_potential = top_5_ventas.copy()
-        df_potential = df_potential[['point_of_sale_id', 'vendor_id', 'geo_zone', 'unidades_pedidas', 'precio_total_vendedor','super_catalog_id']]
+        df_potential = df_potential[['point_of_sale_id', 'vendor_id', 'geo_zone', 'unidades_pedidas', 'precio_total_vendedor', 'super_catalog_id']]
         
-        # Convertir tipos de datos
+        # Crear una clave compuesta para el filtrado
+        df_potential['key'] = df_potential['point_of_sale_id'] + '_' + df_potential['vendor_id']
+        vendor_pos_relations['key'] = vendor_pos_relations['point_of_sale_id'] + '_' + vendor_pos_relations['vendor_id']
+        
+        # Filtrar df_potential para excluir PDVs que ya tienen relación
+        df_potential = df_potential[~df_potential['key'].isin(vendor_pos_relations['key'])]
+        df_potential = df_potential.drop('key', axis=1)  # Eliminar la columna temporal
+
+        # Debug: Imprimir información de verificación
+        st.write(f"Total registros en df_potential antes del filtrado: {len(top_5_ventas)}")
+        st.write(f"Total registros en df_potential después del filtrado: {len(df_potential)}")
+        st.write(f"Total relaciones vendor-PDV: {len(vendor_pos_relations)}")
+        
+        # Convertir tipos de datos numéricos
         df_actual['unidades_pedidas'] = df_actual['unidades_pedidas'].astype(float)
         df_actual['precio_total'] = df_actual['precio_total'].astype(float)
         df_potential['unidades_pedidas'] = df_potential['unidades_pedidas'].astype(float)
@@ -178,6 +201,7 @@ def load_data():
     except Exception as e:
         st.error(f"Error al cargar los datos: {str(e)}")
         return None, None
+    
 # Título
 st.header("🏪 Oportunidades de Ventas por Proveedor y Zona Geográfica")
 
@@ -198,31 +222,35 @@ if df_actual is not None and df_potential is not None:
     df_potential_filtered = df_potential[df_potential['vendor_id'] == selected_vendor].copy()
 
     # Verificar si hay datos para mostrar
-    if len(df_actual_filtered) == 0 or len(df_potential_filtered) == 0:
-        st.warning(f"No hay datos disponibles para el proveedor {selected_vendor}")
+
+    if len(df_potential_filtered) == 0:
+        st.warning(f"No hay datos de potencial de venta para el proveedor {selected_vendor}")
     else:
         try:
             fig, analysis = create_sales_potential_dashboard(df_actual_filtered, df_potential_filtered)
-            #st.plotly_chart(fig, use_container_width=True)
-        
-        # Métricas principales
+            
+            # Mostrar métricas
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric(
-                "Total Ventas Actuales", 
-                f"${analysis['precio_total'].sum():,.2f}"
-            )
+                    "Total Ventas Actuales", 
+                    f"${analysis['precio_total'].sum():,.2f}"
+                )
             with col2:
                 st.metric(
-                "Total Ventas Potenciales", 
-                f"${analysis['precio_total_vendedor'].sum():,.2f}"
-            )
+                    "Total Ventas Potenciales", 
+                    f"${analysis['precio_total_vendedor'].sum():,.2f}"
+                )
             with col3:
-                crecimiento_promedio = ((analysis['precio_total_vendedor'].sum() / analysis['precio_total'].sum()) * 100).round(2)
+                if analysis['precio_total'].sum() > 0:
+                    crecimiento_promedio = ((analysis['precio_total_vendedor'].sum() / analysis['precio_total'].sum()) * 100).round(2)
+                else:
+                    crecimiento_promedio = 100  # o cualquier otro valor que tenga sentido para tu caso
                 st.metric(
-                "Potencial de Crecimiento", 
-                f"{crecimiento_promedio:.2f}%"
-            )
+                    "Potencial de Crecimiento", 
+                    f"{crecimiento_promedio:.2f}%"
+                )
+            
             st.plotly_chart(fig, use_container_width=True)
 
         # Nueva sección de análisis por zona
