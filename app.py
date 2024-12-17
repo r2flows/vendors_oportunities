@@ -145,71 +145,107 @@ def create_sales_potential_dashboard(df_actual, df_potential):
 def load_data():
     try:
         # Cargar los datos originales
-        orders_delivered = pd.read_csv('orders_delivered_pos_vendor_geozone_1.csv')
-        top_5_ventas = pd.read_csv('top_5_productos_geozona_1.csv')
+        orders_delivered = pd.read_csv('orders_delivered_pos_vendor_geozone.csv')
+        top_5_ventas = pd.read_csv('top_5_productos_geozona.csv')
         vendor_pos_relations = pd.read_csv('vendor_pos_relations.csv')
 
-        # Asegurar que los IDs sean del mismo tipo en todos los DataFrames
-        orders_delivered['vendor_id'] = orders_delivered['vendor_id'].astype(str)
-        top_5_ventas['vendor_id'] = top_5_ventas['vendor_id'].astype(str)
-        vendor_pos_relations['vendor_id'] = vendor_pos_relations['vendor_id'].astype(str)
-        
-        orders_delivered['point_of_sale_id'] = orders_delivered['point_of_sale_id'].astype(str)
-        top_5_ventas['point_of_sale_id'] = top_5_ventas['point_of_sale_id'].astype(str)
-        vendor_pos_relations['point_of_sale_id'] = vendor_pos_relations['point_of_sale_id'].astype(str)
-
-        # Mapeo y filtrado de vendors
+        # Convertir vendor_id a string y aplicar mapeo en todos los DataFrames
         vendor_mapping = {'10269':'1152', '10273':'1156', '10276':'1159', '10281':'1164'}
-        orders_delivered['vendor_id'] = orders_delivered['vendor_id'].replace(vendor_mapping)
-        vendor_pos_relations['vendor_id'] = vendor_pos_relations['vendor_id'].replace(vendor_mapping)
-        
         valid_vendors = ['1152', '1156', '1159', '1164']
+        
+        # Asegurar que todos los IDs sean strings
+        orders_delivered['vendor_id'] = orders_delivered['vendor_id'].astype(str).replace(vendor_mapping)
+        orders_delivered['point_of_sale_id'] = orders_delivered['point_of_sale_id'].astype(str)
+        orders_delivered['super_catalog_id'] = orders_delivered['super_catalog_id'].astype(str)
+        
+        top_5_ventas['vendor_id'] = top_5_ventas['vendor_id'].astype(str)
+        top_5_ventas['point_of_sale_id'] = top_5_ventas['point_of_sale_id'].astype(str)
+        top_5_ventas['super_catalog_id'] = top_5_ventas['super_catalog_id'].astype(str)
+        
+        vendor_pos_relations['vendor_id'] = vendor_pos_relations['vendor_id'].astype(str).replace(vendor_mapping)
+        vendor_pos_relations['point_of_sale_id'] = vendor_pos_relations['point_of_sale_id'].astype(str)
+        
+        # Filtrar por vendors válidos
         orders_delivered = orders_delivered[orders_delivered['vendor_id'].isin(valid_vendors)]
         top_5_ventas = top_5_ventas[top_5_ventas['vendor_id'].isin(valid_vendors)]
         vendor_pos_relations = vendor_pos_relations[vendor_pos_relations['vendor_id'].isin(valid_vendors)]
 
-        # Preparar df_actual
+        # Preparar df_actual - Sin ningún filtro de vendor_pos_relations
         df_actual = orders_delivered.copy()
         df_actual['precio_total'] = df_actual['unidades_pedidas'].astype(float) * df_actual['precio_minimo'].astype(float)
         df_actual = df_actual[['point_of_sale_id', 'vendor_id', 'geo_zone', 'unidades_pedidas', 'precio_total', 'super_catalog_id']]
         
-        # Preparar df_potential
+        # Preparar df_potential - Sin filtro de vendor_pos_relations
         df_potential = top_5_ventas.copy()
         df_potential = df_potential[['point_of_sale_id', 'vendor_id', 'geo_zone', 'unidades_pedidas', 'precio_total_vendedor', 'super_catalog_id']]
-        
-        # Crear una clave compuesta para el filtrado
-        df_potential['key'] = df_potential['point_of_sale_id'] + '_' + df_potential['vendor_id']
-        vendor_pos_relations['key'] = vendor_pos_relations['point_of_sale_id'] + '_' + vendor_pos_relations['vendor_id']
-        
-        # Filtrar df_potential para excluir PDVs que ya tienen relación
-        df_potential = df_potential[~df_potential['key'].isin(vendor_pos_relations['key'])]
-        df_potential = df_potential.drop('key', axis=1)  # Eliminar la columna temporal
 
-        # Debug: Imprimir información de verificación
-        #st.write(f"Total registros en df_potential antes del filtrado: {len(top_5_ventas)}")
-        #st.write(f"Total registros en df_potential después del filtrado: {len(df_potential)}")
-        #st.write(f"Total relaciones vendor-PDV: {len(vendor_pos_relations)}")
-        
         # Convertir tipos de datos numéricos
         df_actual['unidades_pedidas'] = df_actual['unidades_pedidas'].astype(float)
         df_actual['precio_total'] = df_actual['precio_total'].astype(float)
         df_potential['unidades_pedidas'] = df_potential['unidades_pedidas'].astype(float)
         df_potential['precio_total_vendedor'] = df_potential['precio_total_vendedor'].astype(float)
+
+        # Crear una tabla de referencia para PDVs potenciales
+        pdv_potenciales = pd.merge(
+            df_potential[['point_of_sale_id', 'vendor_id']].drop_duplicates(),
+            vendor_pos_relations[['point_of_sale_id', 'vendor_id']],
+            on=['point_of_sale_id', 'vendor_id'],
+            how='left',
+            indicator=True
+        )
+        pdv_potenciales = pdv_potenciales[pdv_potenciales['_merge'] == 'left_only'][['point_of_sale_id', 'vendor_id']]
         
-        return df_actual, df_potential
+        # Eliminar productos duplicados (mismo producto, misma zona, mismo PDV)
+        comparativa = pd.merge(
+            df_actual,
+            df_potential,
+            on=['super_catalog_id', 'geo_zone', 'point_of_sale_id']
+        )
+        
+        productos_duplicados = comparativa[
+            comparativa['vendor_id_x'] == comparativa['vendor_id_y']
+        ][['super_catalog_id', 'geo_zone', 'point_of_sale_id', 'vendor_id_x']].drop_duplicates()
+        #st.write(productos_duplicados)
+
+        if not productos_duplicados.empty:
+            # Crear keys asegurando que todos los componentes sean strings
+            df_potential['key'] = (
+                df_potential['super_catalog_id'] + '_' + 
+                df_potential['geo_zone'] + '_' + 
+                df_potential['point_of_sale_id'] + '_' +
+                df_potential['vendor_id']
+            )
+            
+            productos_duplicados['key'] = (
+                productos_duplicados['super_catalog_id'] + '_' + 
+                productos_duplicados['geo_zone'] + '_' + 
+                productos_duplicados['point_of_sale_id'] + '_' +
+                productos_duplicados['vendor_id_x']
+            )
+            
+            df_potential = df_potential[~df_potential['key'].isin(productos_duplicados['key'])]
+            df_potential = df_potential.drop('key', axis=1)
+        
+        # Debug info
+        #st.write(f"Total registros en df_actual: {len(df_actual)}")
+        #st.write(f"Total registros en df_potential: {len(df_potential)}")
+        #st.write(f"Total PDVs potenciales identificados: {len(pdv_potenciales)}")
+        
+        return df_actual, df_potential, pdv_potenciales
         
     except Exception as e:
         st.error(f"Error al cargar los datos: {str(e)}")
-        return None, None
-    
+        return None, None, None
+
 # Título
 st.header("🏪 Oportunidades de Ventas por Proveedor y Zona Geográfica")
 
 # Cargar datos
 
-df_actual, df_potential = load_data()
+df_actual, df_potential, pdv_potenciales = load_data()
 
 if df_actual is not None and df_potential is not None:
+ 
     # Obtener vendor_ids únicos
     vendor_ids = sorted(list(set(df_actual['vendor_id'].unique().tolist()) | 
                            set(df_potential['vendor_id'].unique().tolist())))
@@ -252,7 +288,6 @@ if df_actual is not None and df_potential is not None:
                 )
             
             st.plotly_chart(fig, use_container_width=True)
-
         # Nueva sección de análisis por zona
             st.subheader("📍 Análisis Detallado por Zona Geográfica")
 
@@ -308,12 +343,12 @@ if df_actual is not None and df_potential is not None:
 
                         with col2:
                             st.markdown("##### PDV Potenciales")
-                            pdv_potenciales = set(df_potential_filtered[
-                            df_potential_filtered['geo_zone'] == zona['geo_zone']
-                ]['point_of_sale_id'].unique()) - set(pdv_actuales)
-                            for pdv in pdv_potenciales:
+                            pdv_potenciales_zona = pdv_potenciales[
+                            (pdv_potenciales['vendor_id'] == selected_vendor) &
+                            (df_potential_filtered['geo_zone'] == zona['geo_zone'])
+                            ]['point_of_sale_id'].unique()
+                            for pdv in pdv_potenciales_zona:
                                 st.markdown(f"- `{pdv}`")
-
                     with tab2:
             # Productos con mayor potencial
                         top_productos = (
