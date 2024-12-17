@@ -186,9 +186,9 @@ def load_data():
         df_potential = df_potential.drop('key', axis=1)  # Eliminar la columna temporal
 
         # Debug: Imprimir información de verificación
-        st.write(f"Total registros en df_potential antes del filtrado: {len(top_5_ventas)}")
-        st.write(f"Total registros en df_potential después del filtrado: {len(df_potential)}")
-        st.write(f"Total relaciones vendor-PDV: {len(vendor_pos_relations)}")
+        #st.write(f"Total registros en df_potential antes del filtrado: {len(top_5_ventas)}")
+        #st.write(f"Total registros en df_potential después del filtrado: {len(df_potential)}")
+        #st.write(f"Total relaciones vendor-PDV: {len(vendor_pos_relations)}")
         
         # Convertir tipos de datos numéricos
         df_actual['unidades_pedidas'] = df_actual['unidades_pedidas'].astype(float)
@@ -339,16 +339,16 @@ if df_actual is not None and df_potential is not None:
                         </div>
                     """, unsafe_allow_html=True)
 # Agregar visualización del DataFrame df_potential
-           # st.subheader("🔍 Verificación de Datos")
-            #with st.expander("Ver datos de Ventas Potenciales"):
-             #   st.write("### DataFrame de Ventas Potenciales")
-              #  st.write("Número total de registros:", len(df_potential_filtered))
-               # st.dataframe(
-                #    df_potential_filtered.style.format({
-                 #       'precio_total_vendedor': '${:,.2f}',
-                  #      'unidades_pedidas': '{:,.0f}'
-                   # })
-                #)
+            st.subheader("🔍 Verificación de Datos")
+            with st.expander("Ver datos de Ventas Potenciales"):
+                st.write("### DataFrame de Ventas Potenciales")
+                st.write("Número total de registros:", len(df_potential_filtered))
+                st.dataframe(
+                    df_potential_filtered.style.format({
+                        'precio_total_vendedor': '${:,.2f}',
+                        'unidades_pedidas': '{:,.0f}'
+                    })
+                )
 
 # Mostrar el dataframe
                     #st.dataframe(
