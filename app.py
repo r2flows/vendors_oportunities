@@ -18,8 +18,8 @@ def create_sales_potential_dashboard(df_actual, df_potential):
         pdv_potential = (df_potential.groupby('geo_zone')
                         ['point_of_sale_id'].unique()
                         .apply(lambda x: set(x))) if not df_potential.empty else pd.Series(dtype='object')
-            
-        # Crear el análisis base
+        
+        # Crear el análisis base con left outer join
         zone_analysis = pd.merge(
             df_potential.groupby(['geo_zone', 'vendor_id']).agg({
                 'precio_total_vendedor': 'sum',
@@ -34,18 +34,48 @@ def create_sales_potential_dashboard(df_actual, df_potential):
             suffixes=('_potential', '_actual')
         ).fillna(0)
         
+        def get_pdv_count(zone, status=None):
+            if status is None:
+                return len(pdv_actual[zone]) if zone in pdv_actual else 0
+            key = (zone, status)
+            return len(pdv_potential[key]) if key in pdv_potential else 0
+        
+
         # Agregar los conteos correctos de PDV
-        zone_analysis['pdv_actual'] = zone_analysis['geo_zone'].map(pdv_actual.apply(len))
-        zone_analysis['pdv_potential'] = zone_analysis['geo_zone'].map(pdv_potential.apply(len))
-        zone_analysis['pdv_nuevos'] = zone_analysis['geo_zone'].apply(
-            lambda x: len(pdv_potential[x] - pdv_actual[x]) if x in pdv_potential and x in pdv_actual else 0
-        )
+        zone_analysis['pdv_actual'] = zone_analysis['geo_zone'].apply(get_pdv_count)
+        zone_analysis['pdv_status_1'] = zone_analysis['geo_zone'].apply(lambda x: get_pdv_count(x, 1))
+        zone_analysis['pdv_status_2'] = zone_analysis['geo_zone'].apply(lambda x: get_pdv_count(x, 2))
+        zone_analysis['pdv_sin_relacion'] = zone_analysis['geo_zone'].apply(lambda x: get_pdv_count(x, 0))
+        
+        status_mapping = {0: 'rechazado', 1: 'aceptado', 2: 'pendiente'}
+        
+        for desc in status_mapping.values():
+            zone_analysis[f'potential_status_{desc}'] = 0
+        
+
+        # Crear columnas para cada status
+        for geo_zone in zone_analysis['geo_zone'].unique():
+            for status, desc in status_mapping.items():
+                mask = (df_potential['geo_zone'] == geo_zone) & (df_potential['status'] == status)
+                if mask.any():
+                    total_vendedor = df_potential.loc[mask, 'precio_total_vendedor'].sum()
+                    zone_analysis.loc[zone_analysis['geo_zone'] == geo_zone, f'potential_status_{desc}'] = total_vendedor
         
         # Calcular métricas adicionales
         zone_analysis['total_sales'] = zone_analysis['precio_total'] + zone_analysis['precio_total_vendedor']
         zone_analysis['actual_percentage'] = (zone_analysis['precio_total'] / zone_analysis['total_sales'] * 100).round(2)
         zone_analysis['potential_percentage'] = (zone_analysis['precio_total_vendedor'] / zone_analysis['total_sales'] * 100).round(2)
         zone_analysis['growth_percentage'] = ((zone_analysis['precio_total_vendedor'] / zone_analysis['precio_total']) * 100).round(2)
+        
+        # Calcular porcentajes por status de forma segura
+        for status in ['rechazado', 'aceptado', 'pendiente']:
+            col_name = f'potential_status_{status}'
+            pct_name = f'percentage_status_{status}'
+            zone_analysis[pct_name] = np.where(
+                zone_analysis['precio_total_vendedor'] > 0,
+                (zone_analysis[col_name] / zone_analysis['precio_total_vendedor'] * 100).round(2),
+                0
+            )
 
         # Ordenar por potencial de venta
         zone_analysis = zone_analysis.sort_values('precio_total_vendedor', ascending=False)
@@ -141,124 +171,146 @@ def create_sales_potential_dashboard(df_actual, df_potential):
         raise ValueError(f"Error al procesar los datos: {str(e)}")
 
 # Cargar los datos con manejo de tipos
+
+def show_pdv_details(df_actual_filtered, df_potential_filtered, zona):
+    # Mostrar resumen de ventas por status
+    st.markdown("#### 📊 Desglose de Venta Potencial")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric(
+            "_PdV Aceptados_", 
+            f"${zona['potential_status_aceptado']:,.2f}",
+            f"{zona['percentage_status_aceptado']}% del potencial"
+        )
+    
+    with col2:
+        st.metric(
+            "_PdV Pendientes_", 
+            f"${zona['potential_status_pendiente']:,.2f}",
+            f"{zona['percentage_status_pendiente']}% del potencial"
+        )
+    
+    with col3:
+        st.metric(
+            "_PdV Rechazados o Sin Relación Comercial_", 
+            f"${zona['potential_status_rechazado']:,.2f}",
+            f"{zona['percentage_status_rechazado']}% del potencial"
+        )
+    
+    st.markdown("---")
+    st.markdown("#### 📍 Detalle de Puntos de Venta")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.write("_PdV Aceptados Venta Actual_")
+        pdv_actuales = df_actual_filtered[
+            df_actual_filtered['geo_zone'] == zona['geo_zone']
+        ]['point_of_sale_id'].unique()
+        for pdv in pdv_actuales:
+            st.markdown(f"- `{pdv}`")
+
+    with col2:
+        st.markdown("_PdV Aceptados Venta Potencial_")
+        #st.markdown("_Status 1 - Aceptados por el proveedor_")
+        pdv_status_1 = df_potential_filtered[
+            (df_potential_filtered['geo_zone'] == zona['geo_zone']) &
+            (df_potential_filtered['status'] == 1)
+        ]['point_of_sale_id'].unique()
+        for pdv in pdv_status_1:
+            st.markdown(f"- `{pdv}`")
+
+    with col3:
+        st.markdown("_PdV Pendientes Venta Potencial_")
+        #st.markdown("_Status 2 - Decisión pendiente_")
+        pdv_status_2 = df_potential_filtered[
+            (df_potential_filtered['geo_zone'] == zona['geo_zone']) &
+            (df_potential_filtered['status'] == 2)
+        ]['point_of_sale_id'].unique()
+        for pdv in pdv_status_2:
+            st.markdown(f"- `{pdv}`")
+
+    with col4:
+        st.markdown("_PDV Rechazados Vental Potencial_")
+        #st.markdown("_Status 0 - Rechazados por el proveedor_")
+        pdv_rechazados = df_potential_filtered[
+            (df_potential_filtered['geo_zone'] == zona['geo_zone']) &
+            (df_potential_filtered['status'] == 0)
+        ]['point_of_sale_id'].unique()
+        for pdv in pdv_rechazados:
+            st.markdown(f"- `{pdv}`")
+
 @st.cache_data
 def load_data():
     try:
-        # Cargar los datos originales
+        # Cargar todos los datasets necesarios
         orders_delivered = pd.read_csv('orders_delivered_pos_vendor_geozone.csv')
         top_5_ventas = pd.read_csv('top_5_productos_geozona.csv')
         vendor_pos_relations = pd.read_csv('vendor_pos_relations.csv')
 
-        # Convertir vendor_id a string y aplicar mapeo en todos los DataFrames
-        vendor_mapping = {'10269':'1152', '10273':'1156', '10276':'1159', '10281':'1164'}
-        valid_vendors = ['1152', '1156', '1159', '1164']
-        
-        # Asegurar que todos los IDs sean strings
-        orders_delivered['vendor_id'] = orders_delivered['vendor_id'].astype(str).replace(vendor_mapping)
-        orders_delivered['point_of_sale_id'] = orders_delivered['point_of_sale_id'].astype(str)
-        orders_delivered['super_catalog_id'] = orders_delivered['super_catalog_id'].astype(str)
-        
+        # Convertir vendor_id a string en todos los DataFrames
+        orders_delivered['vendor_id'] = orders_delivered['vendor_id'].astype(str)
         top_5_ventas['vendor_id'] = top_5_ventas['vendor_id'].astype(str)
-        top_5_ventas['point_of_sale_id'] = top_5_ventas['point_of_sale_id'].astype(str)
-        top_5_ventas['super_catalog_id'] = top_5_ventas['super_catalog_id'].astype(str)
-        
-        vendor_pos_relations['vendor_id'] = vendor_pos_relations['vendor_id'].astype(str).replace(vendor_mapping)
-        vendor_pos_relations['point_of_sale_id'] = vendor_pos_relations['point_of_sale_id'].astype(str)
-        
-        # Filtrar por vendors válidos
-        orders_delivered = orders_delivered[orders_delivered['vendor_id'].isin(valid_vendors)]
-        top_5_ventas = top_5_ventas[top_5_ventas['vendor_id'].isin(valid_vendors)]
-        vendor_pos_relations = vendor_pos_relations[vendor_pos_relations['vendor_id'].isin(valid_vendors)]
+        vendor_pos_relations['vendor_id'] = vendor_pos_relations['vendor_id'].astype(str)
 
-        # Preparar df_actual - Sin ningún filtro de vendor_pos_relations
+        # Filtrar y mapear vendor_ids
+        vendor_mapping = {'10269':'1152', '10273':'1156', '10276':'1159', '10281':'1164'}
+        orders_delivered['vendor_id'] = orders_delivered['vendor_id'].replace(vendor_mapping)
+        orders_delivered = orders_delivered[orders_delivered['vendor_id'].isin(['1152','1156','1159','1164'])]
+        top_5_ventas = top_5_ventas[top_5_ventas['vendor_id'].isin(['1152','1156','1159','1164'])]
+
+        # Preparar df_actual
         df_actual = orders_delivered.copy()
         df_actual['precio_total'] = df_actual['unidades_pedidas'].astype(float) * df_actual['precio_minimo'].astype(float)
-        df_actual = df_actual[['point_of_sale_id', 'vendor_id', 'geo_zone', 'unidades_pedidas', 'precio_total', 'super_catalog_id']]
+        df_actual = df_actual[['point_of_sale_id', 'vendor_id', 'geo_zone', 'unidades_pedidas', 'precio_total','super_catalog_id']]
         
-        # Preparar df_potential - Sin filtro de vendor_pos_relations
+        # Preparar df_potential
         df_potential = top_5_ventas.copy()
-        df_potential = df_potential[['point_of_sale_id', 'vendor_id', 'geo_zone', 'unidades_pedidas', 'precio_total_vendedor', 'super_catalog_id']]
-
-        # Convertir tipos de datos numéricos
+        df_potential = df_potential[['point_of_sale_id', 'vendor_id', 'geo_zone', 'unidades_pedidas', 'precio_total_vendedor','super_catalog_id']]
+        
+        # Convertir tipos de datos
         df_actual['unidades_pedidas'] = df_actual['unidades_pedidas'].astype(float)
         df_actual['precio_total'] = df_actual['precio_total'].astype(float)
         df_potential['unidades_pedidas'] = df_potential['unidades_pedidas'].astype(float)
         df_potential['precio_total_vendedor'] = df_potential['precio_total_vendedor'].astype(float)
 
-        # Crear una tabla de referencia para PDVs potenciales
-        pdv_potenciales = pd.merge(
-            df_potential[['point_of_sale_id', 'vendor_id']].drop_duplicates(),
-            vendor_pos_relations[['point_of_sale_id', 'vendor_id']],
-            on=['point_of_sale_id', 'vendor_id'],
-            how='left',
-            indicator=True
-        )
-        pdv_potenciales = pdv_potenciales[pdv_potenciales['_merge'] == 'left_only'][['point_of_sale_id', 'vendor_id']]
-        
-        # Eliminar productos duplicados (mismo producto, misma zona, mismo PDV)
-        comparativa = pd.merge(
-            df_actual,
+        # Agregar información de status
+        df_potential = pd.merge(
             df_potential,
-            on=['super_catalog_id', 'geo_zone', 'point_of_sale_id']
+            vendor_pos_relations[['point_of_sale_id', 'vendor_id', 'status']],
+            on=['point_of_sale_id', 'vendor_id'],
+            how='left'
         )
         
-        productos_duplicados = comparativa[
-            comparativa['vendor_id_x'] == comparativa['vendor_id_y']
-        ][['super_catalog_id', 'geo_zone', 'point_of_sale_id', 'vendor_id_x']].drop_duplicates()
-        #st.write(productos_duplicados)
-
-        if not productos_duplicados.empty:
-            # Crear keys asegurando que todos los componentes sean strings
-            df_potential['key'] = (
-                df_potential['super_catalog_id'] + '_' + 
-                df_potential['geo_zone'] + '_' + 
-                df_potential['point_of_sale_id'] + '_' +
-                df_potential['vendor_id']
-            )
-            
-            productos_duplicados['key'] = (
-                productos_duplicados['super_catalog_id'] + '_' + 
-                productos_duplicados['geo_zone'] + '_' + 
-                productos_duplicados['point_of_sale_id'] + '_' +
-                productos_duplicados['vendor_id_x']
-            )
-            
-            df_potential = df_potential[~df_potential['key'].isin(productos_duplicados['key'])]
-            df_potential = df_potential.drop('key', axis=1)
+        # Llenar status faltantes con 0 (sin relación)
+        df_potential['status'] = df_potential['status'].fillna(0)
         
-        # Debug info
-        #st.write(f"Total registros en df_actual: {len(df_actual)}")
-        #st.write(f"Total registros en df_potential: {len(df_potential)}")
-        #st.write(f"Total PDVs potenciales identificados: {len(pdv_potenciales)}")
-        
-        return df_actual, df_potential, pdv_potenciales
+        return df_actual, df_potential
         
     except Exception as e:
         st.error(f"Error al cargar los datos: {str(e)}")
-        return None, None, None
-
+        return None, None
+    
 # Título
 st.header("🏪 Oportunidades de Ventas por Proveedor y Zona Geográfica")
 
 # Cargar datos
 
-df_actual, df_potential, pdv_potenciales = load_data()
+df_actual, df_potential = load_data()
 
 if df_actual is not None and df_potential is not None:
- 
     # Obtener vendor_ids únicos
     vendor_ids = sorted(list(set(df_actual['vendor_id'].unique().tolist()) | 
                            set(df_potential['vendor_id'].unique().tolist())))
     
-    # Crear selectbox para vendor_id
     selected_vendor = st.selectbox('Seleccionar Proveedor:', vendor_ids)
     
     # Filtrar datos
     df_actual_filtered = df_actual[df_actual['vendor_id'] == selected_vendor].copy()
     df_potential_filtered = df_potential[df_potential['vendor_id'] == selected_vendor].copy()
 
-    # Verificar si hay datos para mostrar
-
+    # Modificar la validación
     if len(df_potential_filtered) == 0:
         st.warning(f"No hay datos de potencial de venta para el proveedor {selected_vendor}")
     else:
@@ -288,6 +340,7 @@ if df_actual is not None and df_potential is not None:
                 )
             
             st.plotly_chart(fig, use_container_width=True)
+
         # Nueva sección de análisis por zona
             st.subheader("📍 Análisis Detallado por Zona Geográfica")
 
@@ -332,23 +385,7 @@ if df_actual is not None and df_potential is not None:
                     tab1, tab2 = st.tabs(["📍 Puntos de Venta", "📦 Productos con Potencial"])
         
                     with tab1:
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.markdown("##### PDV Actuales")
-                            pdv_actuales = df_actual_filtered[
-                            df_actual_filtered['geo_zone'] == zona['geo_zone']
-                ]['point_of_sale_id'].unique()
-                            for pdv in pdv_actuales:
-                                st.markdown(f"- `{pdv}`")
-
-                        with col2:
-                            st.markdown("##### PDV Potenciales")
-                            pdv_potenciales_zona = pdv_potenciales[
-                            (pdv_potenciales['vendor_id'] == selected_vendor) &
-                            (df_potential_filtered['geo_zone'] == zona['geo_zone'])
-                            ]['point_of_sale_id'].unique()
-                            for pdv in pdv_potenciales_zona:
-                                st.markdown(f"- `{pdv}`")
+                        show_pdv_details(df_actual_filtered, df_potential_filtered, zona)
                     with tab2:
             # Productos con mayor potencial
                         top_productos = (
@@ -361,7 +398,7 @@ if df_actual is not None and df_potential is not None:
                         'unidades_pedidas': 'sum'
                         })
                         .sort_values('precio_total_vendedor', ascending=False)
-                        .head(5)
+                        .head(10)
                         )
             
                         for idx, (prod_id, row) in enumerate(top_productos.iterrows(), 1):
