@@ -47,20 +47,26 @@ def create_sales_potential_dashboard(df_actual, df_potential):
         zone_analysis['pdv_status_2'] = zone_analysis['geo_zone'].apply(lambda x: get_pdv_count(x, 2))
         zone_analysis['pdv_sin_relacion'] = zone_analysis['geo_zone'].apply(lambda x: get_pdv_count(x, 0))
         
-        status_mapping = {0: 'rechazado', 1: 'aceptado', 2: 'pendiente'}
+        status_mapping = {0: 'rechazado', 1: 'aceptado', 2: 'pendiente', None: 'sin_relacion'}        
+        
         
         for desc in status_mapping.values():
             zone_analysis[f'potential_status_{desc}'] = 0
         
 
-        # Crear columnas para cada status
         for geo_zone in zone_analysis['geo_zone'].unique():
             for status, desc in status_mapping.items():
-                mask = (df_potential['geo_zone'] == geo_zone) & (df_potential['status'] == status)
+                if status is None:
+                    # For points without relationship - those not in vendor_pos_relations
+                    mask = (df_potential['geo_zone'] == geo_zone) & (df_potential['status'].isna())
+                else:
+                    mask = (df_potential['geo_zone'] == geo_zone) & (df_potential['status'] == status)
+                
                 if mask.any():
                     total_vendedor = df_potential.loc[mask, 'precio_total_vendedor'].sum()
                     zone_analysis.loc[zone_analysis['geo_zone'] == geo_zone, f'potential_status_{desc}'] = total_vendedor
         
+
         # Calcular métricas adicionales
         zone_analysis['total_sales'] = zone_analysis['precio_total'] + zone_analysis['precio_total_vendedor']
         zone_analysis['actual_percentage'] = (zone_analysis['precio_total'] / zone_analysis['total_sales'] * 100).round(2)
@@ -68,7 +74,7 @@ def create_sales_potential_dashboard(df_actual, df_potential):
         zone_analysis['growth_percentage'] = ((zone_analysis['precio_total_vendedor'] / zone_analysis['precio_total']) * 100).round(2)
         
         # Calcular porcentajes por status de forma segura
-        for status in ['rechazado', 'aceptado', 'pendiente']:
+        for status in ['rechazado', 'aceptado', 'pendiente','sin_relacion']:
             col_name = f'potential_status_{status}'
             pct_name = f'percentage_status_{status}'
             zone_analysis[pct_name] = np.where(
@@ -173,9 +179,9 @@ def create_sales_potential_dashboard(df_actual, df_potential):
 # Cargar los datos con manejo de tipos
 
 def show_pdv_details(df_actual_filtered, df_potential_filtered, zona):
-    # Mostrar resumen de ventas por status
+    # Mostrar resumen de ventas por status con separación
     st.markdown("#### 📊 Desglose de Venta Potencial")
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.metric(
@@ -193,15 +199,22 @@ def show_pdv_details(df_actual_filtered, df_potential_filtered, zona):
     
     with col3:
         st.metric(
-            "_PdV Rechazados o Sin Relación Comercial_", 
+            "_PdV Rechazados_", 
             f"${zona['potential_status_rechazado']:,.2f}",
             f"{zona['percentage_status_rechazado']}% del potencial"
+        )
+    
+    with col4:
+        st.metric(
+            "_PdV Sin Relación_", 
+            f"${zona['potential_status_sin_relacion']:,.2f}",
+            f"{zona['percentage_status_sin_relacion']}% del potencial"
         )
     
     st.markdown("---")
     st.markdown("#### 📍 Detalle de Puntos de Venta")
     
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
         st.write("_PdV Aceptados Venta Actual_")
@@ -213,7 +226,6 @@ def show_pdv_details(df_actual_filtered, df_potential_filtered, zona):
 
     with col2:
         st.markdown("_PdV Aceptados Venta Potencial_")
-        #st.markdown("_Status 1 - Aceptados por el proveedor_")
         pdv_status_1 = df_potential_filtered[
             (df_potential_filtered['geo_zone'] == zona['geo_zone']) &
             (df_potential_filtered['status'] == 1)
@@ -223,7 +235,6 @@ def show_pdv_details(df_actual_filtered, df_potential_filtered, zona):
 
     with col3:
         st.markdown("_PdV Pendientes Venta Potencial_")
-        #st.markdown("_Status 2 - Decisión pendiente_")
         pdv_status_2 = df_potential_filtered[
             (df_potential_filtered['geo_zone'] == zona['geo_zone']) &
             (df_potential_filtered['status'] == 2)
@@ -232,14 +243,64 @@ def show_pdv_details(df_actual_filtered, df_potential_filtered, zona):
             st.markdown(f"- `{pdv}`")
 
     with col4:
-        st.markdown("_PDV Rechazados Vental Potencial_")
-        #st.markdown("_Status 0 - Rechazados por el proveedor_")
+        st.markdown("_PdV Rechazados_")
         pdv_rechazados = df_potential_filtered[
             (df_potential_filtered['geo_zone'] == zona['geo_zone']) &
             (df_potential_filtered['status'] == 0)
         ]['point_of_sale_id'].unique()
         for pdv in pdv_rechazados:
             st.markdown(f"- `{pdv}`")
+
+    with col5:
+        st.markdown("_PdV Sin Relación Comercial_")
+        pdv_sin_relacion = df_potential_filtered[
+            (df_potential_filtered['geo_zone'] == zona['geo_zone']) &
+            (df_potential_filtered['status'].isna())
+        ]['point_of_sale_id'].unique()
+        for pdv in pdv_sin_relacion:
+            st.markdown(f"- `{pdv}`")
+
+
+def create_vendor_summary(df_actual, df_potential):
+    # Crear análisis para todos los vendors
+    summary = pd.merge(
+        df_potential.groupby('vendor_id').agg({
+            'precio_total_vendedor': 'sum',
+            'unidades_pedidas': 'sum',
+        }).reset_index(),
+        df_actual.groupby('vendor_id').agg({
+            'precio_total': 'sum',
+            'unidades_pedidas': 'sum',
+        }).reset_index() if not df_actual.empty else pd.DataFrame(columns=['vendor_id', 'precio_total', 'unidades_pedidas']),
+        on=['vendor_id'],
+        how='left',
+        suffixes=('_potential', '_actual')
+    ).fillna(0)
+    
+    status_mapping = {0: 'rechazado', 1: 'aceptado', 2: 'pendiente', None: 'sin_relacion'}
+
+    # Añadir desglose por status
+    for status, desc in status_mapping.items():
+        if status is None:
+            summary[f'potential_status_{desc}'] = summary['vendor_id'].apply(
+                lambda x: df_potential[
+                    (df_potential['vendor_id'] == x) & 
+                    (df_potential['status'].isna())
+                ]['precio_total_vendedor'].sum()
+            )
+        else:
+            summary[f'potential_status_{desc}'] = summary['vendor_id'].apply(
+                lambda x: df_potential[
+                    (df_potential['vendor_id'] == x) & 
+                    (df_potential['status'] == status)
+                ]['precio_total_vendedor'].sum()
+            )
+    # Calcular métricas adicionales
+    summary['total_sales'] = summary['precio_total'] + summary['precio_total_vendedor']
+    summary['growth_percentage'] = ((summary['precio_total_vendedor'] / summary['precio_total']) * 100).round(2)
+    summary['growth_percentage'] = summary['growth_percentage'].replace([np.inf, -np.inf], 100)
+    
+    return summary
 
 @st.cache_data
 def load_data():
@@ -255,10 +316,10 @@ def load_data():
         vendor_pos_relations['vendor_id'] = vendor_pos_relations['vendor_id'].astype(str)
 
         # Filtrar y mapear vendor_ids
-        vendor_mapping = {'10269':'1152', '10273':'1156', '10276':'1159', '10281':'1164'}
+        vendor_mapping = {'10249':'1141','10250':'1142','10260':'1148','10267':'1150','10268':'1151','10269':'1152', '10270':'1153','10271':'1154','10272':'1155','10273':'1156','10274':'1157','10275':'1158','10276':'1159','10277':'1160','10278':'1161', '10279':'1162', '10280':'1163','10281':'1164', '10282':'1165'}
         orders_delivered['vendor_id'] = orders_delivered['vendor_id'].replace(vendor_mapping)
-        orders_delivered = orders_delivered[orders_delivered['vendor_id'].isin(['1152','1156','1159','1164'])]
-        top_5_ventas = top_5_ventas[top_5_ventas['vendor_id'].isin(['1152','1156','1159','1164'])]
+        orders_delivered = orders_delivered[orders_delivered['vendor_id'].isin(['1148','1150','1151','1152','1153','1154','1155','1156','1157','1158','1159','1160','1161','1162','1163','1164'])]
+        top_5_ventas = top_5_ventas[top_5_ventas['vendor_id'].isin(['1148','1150','1151','1152','1153','1154','1155','1156','1157','1158','1159','1160','1161','1162','1163','1164'])]
 
         # Preparar df_actual
         df_actual = orders_delivered.copy()
@@ -284,7 +345,7 @@ def load_data():
         )
         
         # Llenar status faltantes con 0 (sin relación)
-        df_potential['status'] = df_potential['status'].fillna(0)
+        #df_potential['status'] = df_potential['status'].fillna(0)
         
         return df_actual, df_potential
         
@@ -301,6 +362,89 @@ df_actual, df_potential = load_data()
 
 if df_actual is not None and df_potential is not None:
     # Obtener vendor_ids únicos
+    vendor_summary = create_vendor_summary(df_actual, df_potential)
+    
+    st.subheader("📊 Resumen General de Todos los Proveedores")
+    
+    # Métricas totales
+    total_actual = vendor_summary['precio_total'].sum()
+    total_potential = vendor_summary['precio_total_vendedor'].sum()
+    avg_growth = ((total_potential / total_actual) * 100).round(2) if total_actual > 0 else 100
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric(
+            "Total Ventas Actuales", 
+            f"${total_actual:,.2f}"
+        )
+    with col2:
+        st.metric(
+            "Total Ventas Potenciales", 
+            f"${total_potential:,.2f}"
+        )
+    with col3:
+        st.metric(
+            "Potencial de Crecimiento Promedio", 
+            f"{avg_growth:.2f}%"
+        )
+    
+    # Desglose del potencial total
+    total_aceptado = vendor_summary['potential_status_aceptado'].sum()
+    total_pendiente = vendor_summary['potential_status_pendiente'].sum()
+    total_rechazado = vendor_summary['potential_status_rechazado'].sum()
+    total_sin_relacion = vendor_summary['potential_status_sin_relacion'].sum()  # Agregar esta línea
+
+    st.markdown("#### 📈 Desglose del Potencial Total")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric(
+            "_PdV Aceptados_",
+            f"${total_aceptado:,.2f}",
+            f"{(total_aceptado/total_potential*100):.1f}% del potencial"
+        )
+    with col2:
+        st.metric(
+            "_PdV Pendientes_",
+            f"${total_pendiente:,.2f}",
+            f"{(total_pendiente/total_potential*100):.1f}% del potencial"
+        )
+    with col3:
+        st.metric(
+            "_PdV Rechazados_",
+            f"${total_rechazado:,.2f}",
+            f"{(total_rechazado/total_potential*100):.1f}% del potencial"
+        )
+    with col4:  # Agregar nueva columna
+        st.metric(
+            "_PdV Sin Relación_",
+            f"${total_sin_relacion:,.2f}",
+            f"{(total_sin_relacion/total_potential*100):.1f}% del potencial"
+        )
+    # Tabla resumen por vendor
+
+# Reemplazar la parte de la tabla resumen por vendor con este código:
+    
+    # Tabla resumen por vendor
+    #st.markdown("#### 📋 Detalle por Proveedor")
+    
+    # Crear una copia del DataFrame y resetear el índice
+    #display_summary = vendor_summary.copy()
+    
+    #st.dataframe(
+     #   display_summary.style
+      #  .format({
+       #     'precio_total': '${:,.2f}',
+        #    'precio_total_vendedor': '${:,.2f}',
+         #   'potential_status_aceptado': '${:,.2f}',
+          #  'potential_status_pendiente': '${:,.2f}',
+           # 'potential_status_rechazado': '${:,.2f}',
+            #'total_sales': '${:,.2f}',
+            #'growth_percentage': '{:,.2f}%'
+       # })
+   # )
+    
+    st.markdown("---")
+    
     vendor_ids = sorted(list(set(df_actual['vendor_id'].unique().tolist()) | 
                            set(df_potential['vendor_id'].unique().tolist())))
     
@@ -338,6 +482,54 @@ if df_actual is not None and df_potential is not None:
                     "Potencial de Crecimiento", 
                     f"{crecimiento_promedio:.2f}%"
                 )
+            
+            st.markdown("### 📊 Desglose de Venta Potencial Total")
+            
+            # Calcular totales por status
+            total_aceptado = analysis['potential_status_aceptado'].sum()
+            total_pendiente = analysis['potential_status_pendiente'].sum()
+            total_rechazado = analysis['potential_status_rechazado'].sum()
+            total_sin_relacion = analysis['potential_status_sin_relacion'].sum()
+            total_potencial = analysis['precio_total_vendedor'].sum()
+            
+            # Calcular porcentajes
+            pct_aceptado = (total_aceptado / total_potencial * 100) if total_potencial > 0 else 0
+            pct_pendiente = (total_pendiente / total_potencial * 100) if total_potencial > 0 else 0
+            pct_rechazado = (total_rechazado / total_potencial * 100) if total_potencial > 0 else 0
+            pct_sin_relacion = (total_sin_relacion / total_potencial * 100) if total_potencial > 0 else 0
+
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric(
+                    "_PdV Aceptados_", 
+                    f"${total_aceptado:,.2f}",
+                    f"{pct_aceptado:.1f}% del potencial"
+                )
+            
+            with col2:
+                st.metric(
+                    "_PdV Pendientes_", 
+                    f"${total_pendiente:,.2f}",
+                    f"{pct_pendiente:.1f}% del potencial"
+                )
+            
+            with col3:
+                st.metric(
+                    "_PdV Rechazados_", 
+                    f"${total_rechazado:,.2f}",
+                    f"{pct_rechazado:.1f}% del potencial"
+                )
+                
+            with col4:
+                st.metric(
+                     "_PdV Sin Relación Comercial_", 
+                    f"${total_sin_relacion:,.2f}",  # Corregido para usar total_sin_relacion
+                    f"{pct_sin_relacion:.1f}% del potencial"  # Corregido para usar pct_sin_relacion
+                )
+                
+            st.markdown("---")
+
             
             st.plotly_chart(fig, use_container_width=True)
 
@@ -432,3 +624,5 @@ if df_actual is not None and df_potential is not None:
 #)
         except Exception as e:
             st.error(f"Error al crear el dashboard: {str(e)}")
+
+
