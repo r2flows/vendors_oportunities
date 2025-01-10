@@ -307,7 +307,7 @@ def load_data():
     try:
         # Cargar todos los datasets necesarios
         orders_delivered = pd.read_csv('orders_delivered_pos_vendor_geozone.csv')
-        top_5_ventas = pd.read_csv('top_10_productos_geozona.csv')
+        top_5_ventas = pd.read_csv('top_5_productos_geozona.csv')
         vendor_pos_relations = pd.read_csv('vendor_pos_relations.csv')
 
         # Convertir vendor_id a string en todos los DataFrames
