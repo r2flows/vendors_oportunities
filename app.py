@@ -89,7 +89,7 @@ def create_sales_potential_dashboard(df_actual, df_potential):
         top_5_zones = (zone_analysis
                       .sort_values('total_sales', ascending=False)
                       .groupby('vendor_id')
-                      .head(5)
+                      .head(7)
                       .sort_values(['vendor_id', 'total_sales'], ascending=[True, False]))
 
         # Create dashboard layout
@@ -590,7 +590,7 @@ if df_actual is not None and df_potential is not None:
                         'unidades_pedidas': 'sum'
                         })
                         .sort_values('precio_total_vendedor', ascending=False)
-                        .head(10)
+                        .head(50)
                         )
             
                         for idx, (prod_id, row) in enumerate(top_productos.iterrows(), 1):
