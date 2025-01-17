@@ -309,7 +309,7 @@ def load_data():
         orders_delivered = pd.read_csv('orders_delivered_pos_vendor_geozone.csv')
         top_5_ventas = pd.read_csv('top_5_productos_geozona.csv')
         vendor_pos_relations = pd.read_csv('vendor_pos_relations.csv')
-
+        
         # Convertir vendor_id a string en todos los DataFrames
         orders_delivered['vendor_id'] = orders_delivered['vendor_id'].astype(str)
         top_5_ventas['vendor_id'] = top_5_ventas['vendor_id'].astype(str)
@@ -335,6 +335,8 @@ def load_data():
         df_actual['precio_total'] = df_actual['precio_total'].astype(float)
         df_potential['unidades_pedidas'] = df_potential['unidades_pedidas'].astype(float)
         df_potential['precio_total_vendedor'] = df_potential['precio_total_vendedor'].astype(float)
+
+
 
         # Agregar información de status
         df_potential = pd.merge(
