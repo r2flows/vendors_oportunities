@@ -449,7 +449,7 @@ if df_actual is not None and df_potential is not None:
     
     vendor_ids = sorted(list(set(df_actual['vendor_id'].unique().tolist()) | 
                            set(df_potential['vendor_id'].unique().tolist())))
-    
+    st.subheader("Oportunidad potencial por proveedor")
     selected_vendor = st.selectbox('Seleccionar Proveedor:', vendor_ids)
     
     # Filtrar datos
