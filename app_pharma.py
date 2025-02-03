@@ -1,151 +1,155 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import numpy as np
 
-def calculate_detailed_savings(df_actual, df_potential):
-    # Calcular valor actual por PdV, vendor y producto
+def process_data_with_mappings():
+    df_actual = pd.read_csv('orders_delivered_pos_vendor_geozone.csv')
+    df_potential = pd.read_csv('top_5_productos_geozona.csv')
+    vendor_relations = pd.read_csv('vendor_pos_relations.csv')
+    
+    # Vendor mapping
+    vendor_mapping = {
+        '10249':'1141','10250':'1142','10260':'1148','10267':'1150',
+        '10268':'1151','10269':'1152','10270':'1153','10271':'1154',
+        '10272':'1155','10273':'1156','10274':'1157','10275':'1158',
+        '10276':'1159','10277':'1160','10278':'1161','10279':'1162',
+        '10280':'1163','10281':'1164','10282':'1165','10479':'1275',
+        '10608':'1303'
+    }
+    
+    # Preparar df_actual
+    df_actual['vendor_id'] = df_actual['vendor_id'].astype(str)
+    df_actual['vendor_id_original'] = df_actual['vendor_id']
+    df_actual['vendor_id_mapped'] = df_actual['vendor_id'].map(vendor_mapping).fillna(df_actual['vendor_id'])
+    
+    # Calcular valor actual una sola vez
     df_actual['valor_actual'] = df_actual['unidades_pedidas'] * df_actual['precio_minimo']
     
-    # Agrupar datos actuales
-    actual_sales = df_actual.groupby(['point_of_sale_id', 'vendor_id', 'super_catalog_id']).agg({
-        'valor_actual': 'sum',
-        'unidades_pedidas': 'sum'
-    }).reset_index()
+    # Agrupar por PdV, vendor y producto para evitar duplicados
+    df_actual_grouped = df_actual.groupby(
+        ['point_of_sale_id', 'vendor_id_mapped', 'super_catalog_id']
+    )['valor_actual'].sum().reset_index()
     
-    # Preparar datos potenciales
-    potential_sales = df_potential[['point_of_sale_id', 'vendor_id', 'super_catalog_id', 
-                                  'precio_total_vendedor', 'unidades_pedidas', 'precio_vendedor']]
-    
-    # Merge para comparar
-    savings_analysis = pd.merge(
-        actual_sales,
-        potential_sales,
-        on=['point_of_sale_id', 'vendor_id', 'super_catalog_id'],
-        how='outer',
-        suffixes=('_actual', '_potential')
-    ).fillna(0)
-    
-    # Calcular ahorro por producto
-    savings_analysis['ahorro_por_producto'] = savings_analysis['valor_actual'] - savings_analysis['precio_total_vendedor']
-    
-    # Agregar porcentaje de ahorro
-    savings_analysis['porcentaje_ahorro'] = np.where(
-        savings_analysis['valor_actual'] > 0,
-        (savings_analysis['ahorro_por_producto'] / savings_analysis['valor_actual']) * 100,
-        0
-    )
-    
-    return savings_analysis
+    return df_actual_grouped, df_potential, vendor_relations
 
-def create_savings_dashboard(savings_df):
-    # Agrupar por PdV y vendor
-    pdv_summary = savings_df.groupby(['point_of_sale_id', 'vendor_id']).agg({
-        'valor_actual': 'sum',
-        'precio_total_vendedor': 'sum',
-        'ahorro_por_producto': 'sum'
-    }).reset_index()
-    
-    pdv_summary['porcentaje_ahorro_total'] = np.where(
-        pdv_summary['valor_actual'] > 0,
-        (pdv_summary['ahorro_por_producto'] / pdv_summary['valor_actual']) * 100,
-        0
-    )
-    
-    return pdv_summary
+def calculate_savings_analysis():
+    df_actual, df_potential, vendor_relations = process_data_with_mappings()
+    savings_analysis = []
 
-def show_savings_analysis():
-    st.title("💰 Análisis de Ahorro Potencial por PdV y Vendor")
+    # Análisis para PdV con relaciones comerciales
+    for _, relation in vendor_relations.iterrows():
+        pdv = relation['point_of_sale_id']
+        vendor = str(relation['vendor_id'])
+        status = relation['status']
+        
+        # Valor actual solo para este vendor
+        actual_value = df_actual[
+            (df_actual['point_of_sale_id'] == pdv) & 
+            (df_actual['vendor_id_mapped'] == vendor)
+        ]['valor_actual'].sum()
+        
+        # Valor potencial
+        potential_value = df_potential[
+            (df_potential['point_of_sale_id'] == pdv) & 
+            (df_potential['vendor_id'] == vendor)
+        ]['precio_total_vendedor'].sum()
+        
+        if actual_value > 0 or potential_value > 0:
+            savings_analysis.append({
+                'point_of_sale_id': pdv,
+                'vendor_id': vendor,
+                'status': status,
+                'valor_actual': actual_value,
+                'valor_potencial': potential_value,
+                'ahorro_potencial': actual_value - potential_value if potential_value > 0 else 0,
+                'tipo': 'Con Relación'
+            })
+
+    # Análisis para PdV sin relaciones comerciales mapeadas
+    all_pdvs = set(df_actual['point_of_sale_id'].unique())
+    related_pdvs = set(vendor_relations['point_of_sale_id'].unique())
+    unrelated_pdvs = all_pdvs - related_pdvs
+
+    for pdv in unrelated_pdvs:
+        actual_value = df_actual[
+            df_actual['point_of_sale_id'] == pdv
+        ]['valor_actual'].sum()
+        
+        if actual_value > 0:
+            # Encontrar mejor oferta potencial
+            potential_options = df_potential[df_potential['point_of_sale_id'] == pdv]
+            best_potential = potential_options['precio_total_vendedor'].min() if not potential_options.empty else 0
+            
+            savings_analysis.append({
+                'point_of_sale_id': pdv,
+                'vendor_id': 'Sin Relación',
+                'status': None,
+                'valor_actual': actual_value,
+                'valor_potencial': best_potential,
+                'ahorro_potencial': actual_value - best_potential if best_potential > 0 else 0,
+                'tipo': 'Sin Relación'
+            })
+    
+    return pd.DataFrame(savings_analysis)
+
+def show_savings_dashboard():
+    st.title("📊 Análisis de Ahorro Potencial")
     
     try:
-        # Cargar datos
-        df_actual = pd.read_csv('orders_delivered_pos_vendor_geozone.csv')
-        df_potential = pd.read_csv('top_5_productos_geozona.csv')
+        savings_df = calculate_savings_analysis()
         
-        # Calcular ahorros detallados
-        savings_analysis = calculate_detailed_savings(df_actual, df_potential)
-        pdv_summary = create_savings_dashboard(savings_analysis)
-        
-        # Filtros
-        col1, col2 = st.columns(2)
+        # Métricas generales
+        col1, col2, col3 = st.columns(3)
         with col1:
-            selected_pdv = st.selectbox(
-                "Seleccionar Punto de Venta",
-                options=sorted(pdv_summary['point_of_sale_id'].unique())
-            )
-        
+            st.metric("Valor Total Actual", 
+                     f"${savings_df['valor_actual'].sum():,.2f}")
         with col2:
-            selected_vendor = st.selectbox(
-                "Seleccionar Vendor",
-                options=sorted(pdv_summary['vendor_id'].unique())
-            )
+            st.metric("Valor Total Potencial", 
+                     f"${savings_df['valor_potencial'].sum():,.2f}")
+        with col3:
+            st.metric("Ahorro Total Posible", 
+                     f"${savings_df['ahorro_potencial'].sum():,.2f}")
         
-        # Mostrar resumen para el PdV y vendor seleccionados
-        filtered_summary = pdv_summary[
-            (pdv_summary['point_of_sale_id'] == selected_pdv) &
-            (pdv_summary['vendor_id'] == selected_vendor)
-        ]
+        # Análisis Detallado
+        st.subheader("🔍 Análisis Detallado")
+        tipo_relacion = st.selectbox(
+            "Filtrar por tipo de relación",
+            ["Todos", "Con Relación", "Sin Relación"]
+        )
         
-        if not filtered_summary.empty:
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric(
-                    "Valor Actual Total",
-                    f"${filtered_summary['valor_actual'].iloc[0]:,.2f}"
-                )
-            with col2:
-                st.metric(
-                    "Valor Potencial Total",
-                    f"${filtered_summary['precio_total_vendedor'].iloc[0]:,.2f}"
-                )
-            with col3:
-                st.metric(
-                    "Ahorro Total Potencial",
-                    f"${filtered_summary['ahorro_por_producto'].iloc[0]:,.2f}",
-                    f"{filtered_summary['porcentaje_ahorro_total'].iloc[0]:.1f}%"
-                )
-        
-        # Mostrar detalle de productos
-        st.subheader("Detalle de Productos y Ahorros")
-        filtered_products = savings_analysis[
-            (savings_analysis['point_of_sale_id'] == selected_pdv) &
-            (savings_analysis['vendor_id'] == selected_vendor)
-        ]
-        
-        if not filtered_products.empty:
-            st.dataframe(
-                filtered_products[['super_catalog_id', 'unidades_pedidas_actual', 
-                                 'valor_actual', 'precio_total_vendedor', 
-                                 'ahorro_por_producto', 'porcentaje_ahorro']]
-                .sort_values('ahorro_por_producto', ascending=False)
-                .style.format({
-                    'valor_actual': '${:,.2f}',
-                    'precio_total_vendedor': '${:,.2f}',
-                    'ahorro_por_producto': '${:,.2f}',
-                    'porcentaje_ahorro': '{:,.1f}%',
-                    'unidades_pedidas_actual': '{:,.0f}'
-                })
-            )
-        
-        # Mostrar top PdV con mayor potencial de ahorro
-        st.subheader("Top 20 Combinaciones PdV-Vendor con Mayor Potencial de Ahorro")
-        top_savings = pdv_summary.nlargest(20, 'ahorro_por_producto')
+        filtered_df = savings_df if tipo_relacion == "Todos" else savings_df[savings_df['tipo'] == tipo_relacion]
         
         st.dataframe(
-            top_savings[['point_of_sale_id', 'vendor_id', 'valor_actual', 
-                        'precio_total_vendedor', 'ahorro_por_producto', 'porcentaje_ahorro_total']]
+            filtered_df.sort_values('ahorro_potencial', ascending=False)
             .style.format({
                 'valor_actual': '${:,.2f}',
-                'precio_total_vendedor': '${:,.2f}',
-                'ahorro_por_producto': '${:,.2f}',
-                'porcentaje_ahorro_total': '{:,.1f}%'
+                'valor_potencial': '${:,.2f}',
+                'ahorro_potencial': '${:,.2f}'
             })
         )
         
+        # Gráfico de distribución
+        fig = go.Figure()
+        for tipo in filtered_df['tipo'].unique():
+            data = filtered_df[filtered_df['tipo'] == tipo]['ahorro_potencial']
+            fig.add_trace(go.Box(
+                y=data,
+                name=tipo,
+                boxpoints='all'
+            ))
+        
+        fig.update_layout(
+            title='Distribución de Ahorros Potenciales por Tipo de Relación',
+            yaxis_title='Ahorro Potencial ($)',
+            showlegend=True
+        )
+        
+        st.plotly_chart(fig)
+        
     except Exception as e:
-        st.error(f"Error al procesar los datos: {str(e)}")
+        st.error(f"Error en el procesamiento: {str(e)}")
 
 if __name__ == "__main__":
     st.set_page_config(layout="wide")
-    show_savings_analysis()
+    show_savings_dashboard()
