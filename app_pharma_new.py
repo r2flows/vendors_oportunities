@@ -10,6 +10,12 @@ st.set_page_config(page_title="Análisis de Compras y Productos POS", layout="wi
 
 if 'current_tab' not in st.session_state:
     st.session_state.current_tab = "Compras Reales vs Potenciales"
+if 'show_winners' not in st.session_state:
+    st.session_state.show_winners = True
+if 'show_semi_winners' not in st.session_state:
+    st.session_state.show_semi_winners = False
+if 'show_medium_winners' not in st.session_state:
+    st.session_state.show_medium_winners = False
 
 # Título
 st.title("Análisis de Compras Reales vs Potenciales por Punto de Venta")
@@ -72,7 +78,7 @@ def load_and_process_data():
     df_orders = pd.read_csv('orders_delivered_pos_vendor_geozone.csv')
     df_products = pd.read_csv('top_5_productos_geozona.csv')
     df_min_purchase = pd.read_csv('minimum_purchase.csv')
-    df_semi_ganadores = pd.read_csv('productos_clasificados_test.csv')
+    df_semi_ganadores = pd.read_csv('productos_clasificados.csv')
 
     # Filtrar registros donde status != 0
     #df_products = df_products[df_products['status'] != 0]
@@ -116,12 +122,9 @@ try:
     show_medium_winners = False
     with tab1:
         st.session_state.current_tab = "Compras Reales vs Potenciales"
-
-
         # Filtrar datos para el POS seleccionado
         pos_data = pos_vendor_totals[pos_vendor_totals['point_of_sale_id'] == selected_pos]
         pos_data = pos_data.sort_values('total_compra', ascending=False)
-
 
         #Obtener estadísticas de órdenes
         pos_stats = pos_order_stats[pos_order_stats['point_of_sale_id'] == selected_pos].iloc[0]
@@ -167,429 +170,184 @@ try:
                 'Porcentaje': '{:.2f}%'
             })
         )
-
-
         st.subheader("Análisis de Intersección de Productos")
-        
-        # Calcular intersección para el POS seleccionado
+
+# Calcular intersección para el POS seleccionado
+        df_products['precio_total_droguería']=df_products['unidades_pedidas']*df_products['precio_minimo']
+
         orders_pos = df_original[df_original['point_of_sale_id'] == selected_pos]
         products_pos = df_products[df_products['point_of_sale_id'] == selected_pos]
-        
         orders_products = set(orders_pos['super_catalog_id'])
         top_products = set(products_pos['super_catalog_id'])
-        intersection = orders_products.intersection(top_products)
-        
+        intersection = pd.merge(df_products, orders_pos, on=['super_catalog_id', 'point_of_sale_id'], how='inner')
+
         intersection_percentage = (len(intersection) / len(orders_products) * 100) if orders_products else 0
-        
+
         col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("Total Productos en Compras Reales", f"{len(orders_products):,}")
         with col2:
-            st.metric("Total Productos Ganadores", f"{len(top_products):,}")
+            st.metric("Total Productos Ganadores Disponibles", f"{len(top_products):,}")
         with col3:
-            st.metric("Productos en Intersección", 
-                     f"{len(intersection):,} ({intersection_percentage:.2f}%)")
+            st.metric("Productos en Intersección", f"{len(intersection):,} ({intersection_percentage:.2f}%)")
 
-        # Mostrar productos en la intersección
-        if intersection:
+# Mostrar productos en la intersección
+        if not intersection.empty:  # <- Aquí está la corrección
             st.subheader("Productos en la Intersección")
-            intersection_products = df_products[
-                (df_products['point_of_sale_id'] == selected_pos) & 
-                (df_products['super_catalog_id'].isin(intersection))
-            ]
-            
-            # Calcular valores totales
-            orders_total = orders_pos[orders_pos['super_catalog_id'].isin(intersection)]['unidades_pedidas'].mul(
-                orders_pos[orders_pos['super_catalog_id'].isin(intersection)]['precio_minimo']
-            ).sum()
-            
-            products_total = intersection_products['valor_total_vendedor'].sum()
-            
-            value_col1, value_col2, value_col3 = st.columns(3)
-            with value_col1:
-                st.metric("Valor Total en Compras Reales", f"${orders_total:,.2f}")
-            with value_col2:
-                st.metric("Valor Total en Productos Ganadores", f"${products_total:,.2f}")
-            with value_col3:
+            #intersection_products = df_products[
+             #   (df_products['point_of_sale_id'] == selected_pos) & 
+              #  (df_products['super_catalog_id'].isin(intersection['super_catalog_id']))
+        #]
+
+    # Calcular valores totales
+        #orders_total = orders_pos[orders_pos['super_catalog_id'].isin(intersection['super_catalog_id'])]['unidades_pedidas'].mul(
+         #   orders_pos[orders_pos['super_catalog_id'].isin(intersection['super_catalog_id'])]['precio_minimo']
+        #).sum()
+        orders_total = intersection['precio_total_droguería'].sum()
+        products_total = intersection['valor_total_vendedor'].sum()
+
+        value_col1, value_col2, value_col3 = st.columns(3)
+        with value_col1:
+            st.metric("Valor Total en Compras Reales", f"${orders_total:,.2f}")
+        with value_col2:
+            st.metric("Valor Total en Productos Ganadores", f"${products_total:,.2f}")
+        with value_col3:
             # Calcular el porcentaje de ahorro
-                savings_percentage = ((orders_total - products_total) / orders_total * 100) if orders_total > 0 else 0
-                st.metric("Ahorro Potencial", f"{savings_percentage:.2f}%")
+            savings_percentage = ((orders_total - products_total) / orders_total * 100) if orders_total > 0 else 0
+            st.metric("Ahorro Potencial", f"{savings_percentage:.2f}%")
 
 
     with tab2:
         st.session_state.current_tab = "Productos Ganadores"
 
+        # Añadir checkboxes en el sidebar para Tab2
+        with category_container:
+            st.markdown("---")
+            st.subheader("Categorías de Productos")
+            show_winners = st.checkbox("Productos Ganadores", value=True, key='cb_winners_tab2')
+            show_semi_winners = st.checkbox("Productos Semi Ganadores", value=False, key='cb_semi_winners_tab2')
+            show_medium_winners = st.checkbox("Productos Medianamente Ganadores", value=False, key='cb_medium_winners_tab2')
+
+        if not any([show_winners, show_semi_winners, show_medium_winners]):
+            st.warning("Por favor seleccione al menos una categoría de productos para visualizar.")
+            st.stop()
 
         # Filtrar productos para el POS seleccionado
-        products_data = df_products[df_products['point_of_sale_id'] == selected_pos]
+        products_data = df_products[df_products['point_of_sale_id'] == selected_pos].copy()
         products_data = products_data.sort_values('valor_total_vendedor', ascending=False)
 
-        df_semi_ganadores['precio_vendedor_total'] = df_semi_ganadores['precio_vendedor']*df_semi_ganadores['unidades_pedidas']
-        semi_ganadores_data = df_semi_ganadores[df_semi_ganadores['point_of_sale_id'] == selected_pos]
-        semi_ganadores_data = semi_ganadores_data.sort_values('precio_vendedor_total', ascending =False)
-
-
-        st.subheader("Venta Potencial Productos Ganadores")
+        # Crear un conjunto de productos ganadores para este POS
+        productos_ganadores = set(products_data['super_catalog_id'].unique())
+        #st.dataframe(df_semi_ganadores)
+        # Procesar datos de semi ganadores
+        df_semi_ganadores['precio_vendedor_total'] = df_semi_ganadores['precio_minimo_orders']*0.99*df_semi_ganadores['unidades_pedidas']
+        semi_ganadores_data = df_semi_ganadores[
+            (df_semi_ganadores['point_of_sale_id'] == selected_pos) &
+            (df_semi_ganadores['categoria_diferencia'] == 'hasta_5_porciento')
+        ].copy()
         
-                # Calcular y mostrar el valor total
-        total_valor = products_data['valor_total_vendedor'].sum()
-        st.metric("Valor Total de Productos Ganadores", f"${total_valor:,.2f}")
-
-        products_table = products_data[[
-            'super_catalog_id', 
-            'unidades_pedidas', 
-            'vendor_id',
-            'valor_total_vendedor'
-        ]].copy()
-        
-        #products_table['status_desc'] = products_table['status'].apply(get_status_description)
-        
-        products_table.columns = [
-            'ID Producto', 
-            'Unidades Pedidas', 
-            'Vendor ID',
-            'Valor Total'
+        # Eliminar productos que ya están en ganadores
+        semi_ganadores_data = semi_ganadores_data[
+            ~semi_ganadores_data['super_catalog_id'].isin(productos_ganadores)
         ]
+        semi_ganadores_data = semi_ganadores_data.sort_values('precio_vendedor_total', ascending=False)
+
+        # Crear conjunto de productos semi ganadores
+        productos_semi_ganadores = set(semi_ganadores_data['super_catalog_id'].unique())
+
+        # Procesar datos de medianamente ganadores
+        medianamente_ganadores_data = df_semi_ganadores[
+            (df_semi_ganadores['point_of_sale_id'] == selected_pos) &
+            (df_semi_ganadores['categoria_diferencia'] == 'hasta_15_porciento')
+        ].copy()
         
-        st.dataframe(
-            products_table.style.format({
-                'Unidades Pedidas': '{:.0f}',
-                'Precio Mínimo': '${:.2f}',
-                'Valor Total': '${:.2f}'
-            })
-        )
-
-        st.subheader("Venta Potencial Semi Ganadores")
-
-        total_valor = semi_ganadores_data['precio_vendedor_total'].sum()
-        st.metric("Valor Total de Productos Semi Ganadores", f"${total_valor:,.2f}")
-
-
-        semi_ganadores_table = semi_ganadores_data[[
-            'super_catalog_id', 
-            'unidades_pedidas', 
-            'vendor_id',
-            'precio_vendedor_total',
-            'categoria_diferencia'
-        ]].copy()
-        
-        #products_table['status_desc'] = products_table['status'].apply(get_status_description)
-        
-        semi_ganadores_table.columns = [
-            'ID Producto', 
-            'Unidades Pedidas', 
-            'Vendor ID',
-            'Valor Total',
-            'categoria'
+        # Eliminar productos que están en ganadores o semi ganadores
+        medianamente_ganadores_data = medianamente_ganadores_data[
+            ~medianamente_ganadores_data['super_catalog_id'].isin(productos_ganadores) &
+            ~medianamente_ganadores_data['super_catalog_id'].isin(productos_semi_ganadores)
         ]
-        
-        st.dataframe(
-            semi_ganadores_table[semi_ganadores_table['categoria']=='hasta_5_porciento'].style.format({
-                'Unidades Pedidas': '{:.0f}',
-                'Precio Mínimo': '${:.2f}',
-                'Valor Total': '${:.2f}'
-            })
-        )
+        medianamente_ganadores_data = medianamente_ganadores_data.sort_values('precio_vendedor_total', ascending=False)
 
-        st.subheader("Venta Potencial Medianamente Ganadores")
+        # Mostrar productos ganadores si está seleccionado
+        if show_winners:
+            st.subheader("Venta Potencial Productos Ganadores")
+            total_valor = products_data['valor_total_vendedor'].sum()
+            st.metric("Valor Total de Productos Ganadores", f"${total_valor:,.2f}")
 
-        total_valor = semi_ganadores_data[semi_ganadores_table['categoria']=='hasta_15_porciento']['precio_vendedor_total'].sum()
-        st.metric("Valor Total de Productos Medianamente Ganadores", f"${total_valor:,.2f}")
-        semi_ganadores_table = semi_ganadores_data[[
-            'super_catalog_id', 
-            'unidades_pedidas', 
-            'vendor_id',
-            'precio_vendedor_total',
-            'categoria_diferencia'
-        ]].copy()
+            products_table = products_data[[
+                'super_catalog_id', 
+                'unidades_pedidas', 
+                'vendor_id',
+                'valor_total_vendedor'
+            ]].copy()
         
-        #products_table['status_desc'] = products_table['status'].apply(get_status_description)
+            products_table.columns = [
+                'ID Producto', 
+                'Unidades Pedidas', 
+                'Vendor ID',
+                'Valor Total'
+            ]
         
-        semi_ganadores_table.columns = [
-            'ID Producto', 
-            'Unidades Pedidas', 
-            'Vendor ID',
-            'Valor Total',
-            'categoria'
-        ]
-        
-        st.dataframe(
-            semi_ganadores_table[semi_ganadores_table['categoria']=='hasta_15_porciento'].style.format({
-                'Unidades Pedidas': '{:.0f}',
-                'Precio Mínimo': '${:.2f}',
-                'Valor Total': '${:.2f}'
-            })
-        )
+            st.dataframe(
+                products_table.style.format({
+                    'Unidades Pedidas': '{:.0f}',
+                    'Valor Total': '${:.2f}'
+                })
+            )
 
-    #with tab3:
+        # Mostrar semi ganadores si está seleccionado
+        if show_semi_winners:
+            st.subheader("Venta Potencial Semi Ganadores")
+            total_valor = semi_ganadores_data['precio_vendedor_total'].sum()
+            st.metric("Valor Total de Productos Semi Ganadores", f"${total_valor:,.2f}")
 
-    #with tab4:
-#        st.subheader("Categorización por Status y Vendor")
+            semi_ganadores_table = semi_ganadores_data[[
+                'super_catalog_id', 
+                'unidades_pedidas', 
+                'vendor_id',
+                'precio_vendedor_total'
+            ]].copy()
         
-        # Filtrar status para el POS seleccionado
- #       pos_status = pos_vendor_status[pos_vendor_status['point_of_sale_id'] == selected_pos].copy()
+            semi_ganadores_table.columns = [
+                'ID Producto', 
+                'Unidades Pedidas', 
+                'Vendor ID',
+                'Valor Total'
+            ]
         
-        # Obtener la geozona del POS seleccionado
-  #      pos_geozone = df_original[df_original['point_of_sale_id'] == selected_pos]['geo_zone'].iloc[0]
-        
-        # Crear tabla de status por vendor
-   #     status_table = []
-    #    for _, row in pos_status.iterrows():
-     #       vendor_id = row['vendor_id']
-      #      status_list = row['status']
-            
-            # Obtener valor total de compras para este vendor
-       #     vendor_total = pos_vendor_totals[
-        #        (pos_vendor_totals['point_of_sale_id'] == selected_pos) & 
-         #       (pos_vendor_totals['vendor_id'] == vendor_id)
-          #  ]['total_compra'].iloc[0] if len(pos_vendor_totals[
-           #     (pos_vendor_totals['point_of_sale_id'] == selected_pos) & 
-            #    (pos_vendor_totals['vendor_id'] == vendor_id)
-            #]) > 0 else 0
-            
-            # Obtener productos asociados
-#            vendor_products = df_products[
- #               (df_products['point_of_sale_id'] == selected_pos) & 
-  #              (df_products['vendor_id'] == vendor_id)
-   #         ]
-            
-    #        min_purchase_info = df_min_purchase[
-     #           (df_min_purchase['vendor_id'] == vendor_id) & 
-      #          (df_min_purchase['name'] == pos_geozone)
-       #     ]
-        #    min_purchase_value = min_purchase_info['min_purchase'].iloc[0] if not min_purchase_info.empty else 0
-            
-            # Calcular si cumple con la compra mínima
-         #   cumple_minimo = vendor_products['valor_total_vendedor'].sum() >= min_purchase_value if min_purchase_value > 0 else True
-            
+            st.dataframe(
+                semi_ganadores_table.style.format({
+                    'Unidades Pedidas': '{:.0f}',
+                    'Valor Total': '${:.2f}'
+                })
+            )
 
+        # Mostrar medianamente ganadores si está seleccionado
+        if show_medium_winners:
+            st.subheader("Venta Potencial Medianamente Ganadores")
+            total_valor = medianamente_ganadores_data['precio_vendedor_total'].sum()
+            st.metric("Valor Total de Productos Medianamente Ganadores", f"${total_valor:,.2f}")
 
-          #  status_table.append({
-           #     'Vendor ID': vendor_id,
-            #    'Status': [get_status_description(s) for s in status_list],
-             #   'Cantidad de Productos': len(vendor_products),
-#                'Valor Total Vendedor': vendor_products['valor_total_vendedor'].sum(),
- #               'Compra Mínima': min_purchase_value,
-  #              'Cumplimiento del Mínimo': "Sí" if cumple_minimo else "No"
-   #         })
+            medianamente_ganadores_table = medianamente_ganadores_data[[
+                'super_catalog_id', 
+                'unidades_pedidas', 
+                'vendor_id',
+                'precio_vendedor_total'
+            ]].copy()
         
-    #    status_df = pd.DataFrame(status_table)
+            medianamente_ganadores_table.columns = [
+                'ID Producto', 
+                'Unidades Pedidas', 
+                'Vendor ID',
+                'Valor Total'
+            ]
         
-        # Mostrar tabla de status
-     #   st.dataframe(
-      #      status_df.style.format({
-       #         'Valor Total Vendedor': '${:,.2f}',
-        #        'Compra Mínima': '${:,.2f}',
-         #       'Compra Real': '${:,.2f}'
-          #  }).applymap(
-           #     lambda x: 'background-color: #ffcccb' if x == "No" else '',
-            #    subset=['Cumplimiento del Mínimo']
-            #)
-        #)
-        
-        # Mostrar distribución de status
-        
-        # Métricas de cumplimiento
-#        st.subheader("Métricas de Cumplimiento de Compra Mínima")
- #       total_vendors = len(status_df)
-  #      vendors_cumplen = len(status_df[status_df['Cumplimiento del Mínimo'] == "Sí"])
-        
-   #     col1, col2, col3 = st.columns(3)
-    #    with col1:
-     #       st.metric("Total Vendors", total_vendors)
-      #  with col2:
-       #     st.metric("Cumplimiento Mínimo", vendors_cumplen)
-        #with col3:
-         #   st.metric("% Cumplimiento", f"{(vendors_cumplen/total_vendors*100):.1f}%")
-                
-                
-#        st.subheader("Distribución de Status por Vendor")
-        
- #       status_distribution = {}
-  #      for status_list in pos_status['status']:
-   #         for status in status_list:
-    #            status_desc = get_status_description(status)
-     #           status_distribution[status_desc] = status_distribution.get(status_desc, 0) + 1
-        
-      #  status_dist_df = pd.DataFrame([
-       #     {'Status': status, 'Cantidad de Vendors': count}
-        #    for status, count in status_distribution.items()
-        #])
-        
-        #st.table(status_dist_df)
-
-
-
-#    with tab3:
-  #      st.subheader("Análisis de Órdenes vs Compra Mínima (Productos Ganadores)")
-    
-    # Preparar datos de órdenes para el POS seleccionado
-   #     orders_data = df_original[df_original['point_of_sale_id'] == selected_pos].copy()
-    
-    # Convertir order_date a datetime
-    #    orders_data['order_date'] = pd.to_datetime(orders_data['order_date'])
-     #   orders_data['date'] = orders_data['order_date'].dt.date
-    
-    # Obtener productos ganadores para el POS seleccionado
-      #  winning_products = df_products[df_products['point_of_sale_id'] == selected_pos].copy()
-    
-    # Crear un mapping de producto a mejor vendor y precio
-       # product_vendor_mapping = winning_products.groupby('super_catalog_id').agg({
-        #    'vendor_id': 'first',
-         #   'precio_minimo': 'first',
-          #  'valor_total_vendedor': 'first'
-    #    }).to_dict('index')
-    
-    # Agrupar órdenes por fecha y order_id
-#        orders_summary = orders_data.groupby(['order_id', 'date']).agg({
- #           'geo_zone': 'first',
-  #          'super_catalog_id': list,
-   #         'unidades_pedidas': list
-    #    }).reset_index()
-    
-    # Obtener fechas únicas para el filtro
-    #    unique_dates = sorted(orders_data['date'].unique())
-    
-    # Filtros en columnas
-    #    col1, col2 = st.columns(2)
-    
-    #    with col1:
-    #        selected_date = st.selectbox(
-    #        "Seleccionar Fecha",
-    #        options=unique_dates,
-    #        format_func=lambda x: x.strftime('%Y-%m-%d')
-     #       )
-    
-    # Filtrar órdenes por fecha
-#        filtered_orders = orders_summary[orders_summary['date'] == selected_date]
-    
- #       with col2:
-  #          selected_order = st.selectbox(
-   #         "Seleccionar Orden",
-    #        options=sorted(filtered_orders['order_id'].unique()),
-     #       format_func=lambda x: f"Orden #{x}"
-      #  )
-    
-    # Obtener datos de la orden seleccionada
-       # order_detail = filtered_orders[filtered_orders['order_id'] == selected_order].iloc[0]
-    
-    # Calcular totales por vendor usando productos ganadores
-        #vendor_totals = {}
-        #for product_id, units in zip(order_detail['super_catalog_id'], order_detail['unidades_pedidas']):
-        #    if product_id in product_vendor_mapping:
-         #       vendor_info = product_vendor_mapping[product_id]
-          #      vendor_id = vendor_info['vendor_id']
-            
-           #     if vendor_id not in vendor_totals:
-            #        vendor_totals[vendor_id] = 0
-            
-             #   vendor_totals[vendor_id] +=  vendor_info['valor_total_vendedor']
-    
-    # Obtener compras mínimas para los vendors en la geozona
-        #geozone = order_detail['geo_zone']
-
-    # Crear DataFrame con la comparación
-#        comparison_data = []
- #       for vendor_id, total_value in vendor_totals.items():
-        # Obtener compra mínima para el vendor
-  #          min_purchase_info = df_min_purchase[
-   #             (df_min_purchase['vendor_id'] == vendor_id) & 
-    #            (df_min_purchase['name'] == geozone)
-     #       ]
-      #      min_purchase_value = min_purchase_info['min_purchase'].iloc[0] if not min_purchase_info.empty else 0
-            
-       #     vendor_status = get_vendor_status(vendor_id, selected_pos, winning_products)
-        
-        # Calcular diferencia
-        #    difference = total_value - min_purchase_value
-         #   cumple_minimo = "Si" if difference >= 0 else "No"
-        
-        #    comparison_data.append({
-         #       'Vendor ID': str(vendor_id),
-          #      'Status': vendor_status[0],  # Tomamos el primer status si hay múltiples
-           #     'Valor de Orden (Mejor Precio)': total_value,
-            #    'Compra Mínima': min_purchase_value,
-             #   'Diferencia': difference,
-              #  'Cumple Mínimo': cumple_minimo
-            #})
-    
-#        comparison_df = pd.DataFrame(comparison_data)
-    
- #       if not comparison_df.empty:
-        # Mostrar métricas generales
-  #          col1, col2 = st.columns(2)
-   #         with col1:
-    #            st.metric(
-     #               "Total de la orden (mejor precio)",
-      #              f"${comparison_df['Valor de Orden (Mejor Precio)'].sum():,.2f}"
-       #         )
-        #    with col2:
-         #       st.metric(
-          #          "Vendors en los que se cumple el mínimo",
-           #         f"{len(comparison_df[comparison_df['Cumple Mínimo'] == 'Si'])}/{len(comparison_df)}"
-            #    )
-            #with col3:
-             #   st.metric(
-              #      "Ahorro Potencial vs Compra Mínima",
-               #     f"${comparison_df['Diferencia'].sum():,.2f}",
-                #    delta_color="normal"
-                #)
-    #        comparison_df['Vendor ID'] = comparison_df['Vendor ID'].astype(str)
-
-        # Crear gráfico
-     #       fig = go.Figure()
-        
-        # Añadir barras para Valor de Orden
-      #      fig.add_trace(go.Bar(
-       #         name='Valor de Orden (Mejor Precio)',
-        #        x=comparison_df['Vendor ID'],#.astype(str),
-         #       y=comparison_df['Valor de Orden (Mejor Precio)'],
-          #      marker_color='rgb(55, 83, 109)'
-           # ))
-        
-        # Añadir barras para Compra Mínima
-            #fig.add_trace(go.Bar(
-           #     name='Compra Mínima',
-          #      x=comparison_df['Vendor ID'].astype(str),
-         #       y=comparison_df['Compra Mínima'],
-        #        marker_color='rgb(26, 118, 255)'
-       #     ))
-
-        # Actualizar el layout
-      #      fig.update_layout(
-     #           title=f'Comparación de Valores de Orden (Mejor Precio) vs Compra Mínima - Orden #{selected_order}',
-    #            xaxis_title='Vendor ID',
-   #             yaxis_title='Monto ($)',
-  #              barmode='group',
- #               xaxis=dict(type='category'),  # Asegurar que Vendor ID sea categórico
-#                height=500
-            #)
-
-        # Mostrar el gráfico
-            #st.plotly_chart(fig, use_container_width=True)
-        
-        # Mostrar tabla detallada
-           # st.subheader("Detalle por Vendor")
-          #  detailed_table = comparison_df.copy()
-        
-            # Aplicar formato condicional
-         #   st.dataframe(
-        #        comparison_df.style.format({
-       #             'Valor de Orden (Mejor Precio)': '${:,.2f}',
-      #              'Compra Mínima': '${:,.2f}',
-     #               'Diferencia': '${:,.2f}'
-    #            }).applymap(
-   #                 lambda x: 'background-color: #90EE90' if x == "Activo" else 
-  #                  ('background-color: #FFD700' if x == "Pendiente" else 
- #                    'background-color: #ffcccb'),
-              #      subset=['Status']
-             #   ).applymap(
-            #        lambda x: 'background-color: #90EE90' if x == "Sí" else 'background-color: #ffcccb',
-           #         subset=['Cumple Mínimo']
-          #      )
-         #   )
-        #else:
-            #st.warning("No se encontraron productos ganadores para esta orden.")
+            st.dataframe(
+                medianamente_ganadores_table.style.format({
+                    'Unidades Pedidas': '{:.0f}',
+                    'Valor Total': '${:.2f}'
+                })
+            )
 
     with tab3:
         st.session_state.current_tab = "Análisis de Órdenes vs Mínimos"
@@ -826,14 +584,18 @@ try:
             # Mostrar métricas actualizadas con valores ajustados
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Total Compra Potencial", f"${vendor_df['Compra Potencial'].sum():,.2f}")
+                st.metric("Total Compra Potencial de la orden", f"${vendor_df['Compra Potencial'].sum():,.2f}")
             with col2:
+                #st.metric("Total Compra Real", f"{intersection['precio_total_droguería'].sum():,.2f}")
+                st.metric("Total Compra Real de la orden", f"${intersection[(intersection['point_of_sale_id'] == selected_pos) & (intersection['order_id'] == selected_order)]['precio_total_droguería'].sum():,.2f}")
+
+            with col3:
                 vendors_cumplen = sum(
                     vendor_df['Compra Potencial'] >= vendor_df['Vendor ID'].map(adjusted_min_purchases)
                 )
                 st.metric("Vendors que Cumplen Mínimo Ajustado", f"{vendors_cumplen}/{len(vendor_df)}")
-            with col3:
-                st.metric("Total Vendors", str(len(vendor_df)))
+            #with col3:
+             #   st.metric("Total Vendors", str(len(vendor_df)))
 
             # Mostrar gráfico
             st.plotly_chart(fig, use_container_width=True)
